@@ -84,6 +84,11 @@ AS
 		DECLARE @DebugLevelString VARCHAR(MAX)
 		DECLARE @backupDBName NVARCHAR(255)
 		DECLARE @newFiles bit
+		DECLARE @dbExists bit
+    DECLARE @oldMDF varchar(128)
+    DECLARE @oldLDF varchar(128)
+    DECLARE @newMDF varchar(128)
+    DECLARE @newLDF varchar(128)
 
 		--Variable initialization
 		SET @DebugLevelString = 'Debug Statement: ';
@@ -97,198 +102,212 @@ AS
 			BEGIN
 				SET @newFiles = 1
 			END
-		IF ((@DebugLevel = 1 OR @DebugLevel = 3) AND (@DatabaseName != @dbName))
-			PRINT 'Database is being Restored to a new database: ' + @dbName
 
-			SET @backupPath = @UncPath + '\' +  @backupDBName + '\FULL\'
-			IF (@DebugLevel = 1 OR @DebugLevel = 3)
-					PRINT @DebugLevelString + '@backupPath = ' + @backupPath;
-
-
-
-    -- check for Database
-    IF (not EXISTS (SELECT name FROM master.dbo.sysdatabases WHERE ('[' + name + ']' = @dbname OR name = @dbname)))
+    -- check if Database exists
+		IF (not EXISTS (SELECT name FROM master.dbo.sysdatabases WHERE ('[' + name + ']' = @dbname OR name = @dbname)))
       BEGIN
-        PRINT @DebugLevelString + 'Database not found'
+		  IF (@DebugLevel = 1 OR @DebugLevel = 3) 
+        PRINT @DebugLevelString + 'a new Database will be created'
       END
-
     ELSE
       BEGIN
+        -- get physical names for  mdf and ldf
+				SET @dbExists = 1
+        SET @oldMDF=(SELECT physical_name FROM sys.master_files where DB_NAME(database_id) = @dbName and type = 0)
+        SET @oldLDF=(SELECT physical_name FROM sys.master_files where DB_NAME(database_id) = @dbName and type = 1)
+      END
 
-        --Get the list of backup files
-            SET @cmd = 'DIR /b ' + @backupPath
-            INSERT  INTO @fileList
-                    (backupFile)
-                    EXEC master.sys.xp_cmdshell @cmd
+		IF ((@DebugLevel = 1 OR @DebugLevel = 3) AND (@DatabaseName != @dbName))
+			PRINT 'Database is being Restored to a DIFFERENT database: ' + @dbName
 
-
-        --Find latest full backup
-            SELECT
-                @lastFullBackup = MAX(backupFile)
-            FROM
-                @fileList
-            WHERE
-                backupFile LIKE '%_FULL_%'
-                AND backupFile LIKE '%' + @backupDBName + '%'
-            IF (@DebugLevel = 1 OR @DebugLevel = 3)
-                BEGIN
-                    PRINT @DebugLevelString + '@lastFullBackup = ' + @lastFullBackup
-                END
-          BEGIN
-            DECLARE @Table TABLE (LogicalName varchar(128),[PhysicalName] varchar(128), [Type] varchar, [FileGroupName] varchar(128), [Size] varchar(128), 
-                  [MaxSize] varchar(128), [FileId]varchar(128), [CreateLSN]varchar(128), [DropLSN]varchar(128), [UniqueId]varchar(128), [ReadOnlyLSN]varchar(128), [ReadWriteLSN]varchar(128), 
-                  [BackupSizeInBytes]varchar(128), [SourceBlockSize]varchar(128), [FileGroupId]varchar(128), [LogGroupGUID]varchar(128), [DifferentialBaseLSN]varchar(128), [DifferentialBaseGUID]varchar(128), [IsReadOnly]varchar(128), [IsPresent]varchar(128), [TDEThumbprint]varchar(128)
-            )
-            DECLARE @Path varchar(1000)='' + @backupPath + @lastFullBackup + ''
-            DECLARE @LogicalNameData varchar(128),@LogicalNameLog varchar(128),@StorageFolder varchar(128),@oldMDF varchar(128),@oldLDF varchar(128)
-            INSERT INTO @table
-            EXEC('RESTORE FILELISTONLY FROM DISK=''' +@Path+ '''')
-            SET @LogicalNameData=(SELECT LogicalName FROM @Table WHERE Type='D')
-            SET @LogicalNameLog=(SELECT LogicalName FROM @Table WHERE Type='L')
-            SET @oldMDF=(SELECT physical_name FROM sys.master_files where DB_NAME(database_id) = @dbName and type = 0)
-            SET @oldLDF=(SELECT physical_name FROM sys.master_files where DB_NAME(database_id) = @dbName and type = 1)
-            SET @StorageFolder=(SELECT PhysicalName FROM @Table where Type='D')
-            SET @StorageFolder = SUBSTRING(@StorageFolder, 0, LEN(@StorageFolder) - LEN(REVERSE(SUBSTRING(REVERSE(@StorageFolder),0,CHARINDEX('\',REVERSE(@StorageFolder))))) + 1) + 'Temp\'
-
-            
-            IF (@newFiles = 1)
-          BEGIN
-            IF (@DebugLevel = 1)
-              PRINT @DebugLevelString + 'USING Data Path from BACKUP: ' + @StorageFolder
-            SET @cmd = 'RESTORE DATABASE ' + @dbName + ' FROM DISK = '''
-              + @backupPath + @lastFullBackup + ''' WITH REPLACE, NORECOVERY,'
-              + 'MOVE ''' + @LogicalNameData + ''' TO ''' + @StorageFolder + @dbName + '.mdf'', ' 
-              + 'MOVE ''' + @LogicalNameLog + ''' TO ''' + @StorageFolder + @dbName + '.ldf''; ' 
-          END
-            ELSE
-          BEGIN
-            IF (@DebugLevel = 1)
-              PRINT @DebugLevelString + 'USING Data Path  from DATABASE: ' + @oldMDF
-            SET @cmd = 'RESTORE DATABASE ' + @dbName + ' FROM DISK = '''
-              + @backupPath + @lastFullBackup + ''' WITH REPLACE, NORECOVERY,'
-              + 'MOVE ''' + @LogicalNameData + ''' TO ''' + @oldMDF + ''', ' 
-              + 'MOVE ''' + @LogicalNameLog + ''' TO ''' + @oldLDF + '''; ' 
-          END
-          END
-            IF (@DebugLevel = 2 OR @DebugLevel = 3)
-                PRINT @cmd
-        --Execute the full restore command
-            IF (@DebugLevel IS NULL)
-                EXEC sp_executesql @cmd
+    SET @backupPath = @UncPath + '\' +  @backupDBName + '\FULL\'
+    IF (@DebugLevel = 1 OR @DebugLevel = 3)
+        PRINT @DebugLevelString + '@backupPath = ' + @backupPath;
 
 
-
-        --Set the path for the log backups
-        SET @backupPath = @UncPath + '\' +  @backupDBName + '\LOG\'
-        IF (@DebugLevel = 1 OR @DebugLevel = 3)
-                PRINT @DebugLevelString + '@backupPath = ' + @backupPath
-
-
-        --Declaring some variables for comparison and string manipuations
-        DECLARE
-            @lfb VARCHAR(255)
-           ,@currentLogBackup VARCHAR(255)
-           ,@previousLogBackup VARCHAR(255)
-           ,@DateTimeValue VARCHAR(255);
-
-        SELECT @lfb = REPLACE(LEFT(RIGHT(@lastFullBackup,19),15),'_','')
+    --Get the list of backup files
+    SET @cmd = 'DIR /b ' + @backupPath
+    INSERT  INTO @fileList
+      (backupFile)
+      EXEC master.sys.xp_cmdshell @cmd
 
 
+    --Find latest full backup
+    SELECT
+      @lastFullBackup = MAX(backupFile)
+    FROM
+      @fileList
+    WHERE
+      backupFile LIKE '%_FULL_%'
+      AND backupFile LIKE '%' + @backupDBName + '%'
+    IF (@DebugLevel = 1 OR @DebugLevel = 3)
+      BEGIN
+        PRINT @DebugLevelString + '@lastFullBackup = ' + @lastFullBackup
+      END
 
-        --Get the list of log files that are relevant to the backups being used
-        SET @cmd = 'DIR /b ' + @backupPath
-        INSERT  INTO @fileList
-                (backupFile)
-                EXEC master.sys.xp_cmdshell @cmd
-        DECLARE backupFiles CURSOR
-        FOR
-            SELECT
-                backupFile
-            FROM
-                @fileList
-            WHERE
-                backupFile LIKE '%_LOG_%'
-                AND backupFile LIKE '%' + @backupDBName + '%'
-                AND REPLACE(LEFT(RIGHT(backupFile,19),15),'_','') > @lfb
-            ORDER BY backupFile
-        OPEN backupFiles
-
-
-
-        -- Loop through all the files for the database
-            FETCH NEXT FROM backupFiles INTO @backupFile
-            SET @previousLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
-            SET @lastFullBackup = REPLACE(LEFT(RIGHT(@lastFullBackup,
-                                                             19),15),'_','')
-            IF (@PointInTime < @lastFullBackup)
-                BEGIN
-                    PRINT 'Invalid @PointInTime.  Must be a value greater than the last full or diff backup'
-                    RETURN -1;
-                END
-            WHILE @@FETCH_STATUS = 0
-                BEGIN
-                    SET @currentLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
-                    IF (@DebugLevel = 1 OR @DebugLevel = 3)
-                        PRINT @DebugLevelString + 'Last Log Backup: ' + @currentLogBackup + ' Last Full Backup: ' + @lfb
-                    IF (@PointInTime IS NULL)
-                        BEGIN
-                            IF (@currentLogBackup > @lfb)
-                                BEGIN
-                                    SET @cmd = 'RESTORE LOG ' + @dbName
-                                        + ' FROM DISK = ''' + @backupPath
-                                        + @backupFile + ''' WITH REPLACE, NORECOVERY'
-                                    IF (@DebugLevel = 2 OR @DebugLevel = 3)
-                                        PRINT @cmd
-                    --Execute the log restores commands
-                                    IF (@DebugLevel IS NULL)
-                                        EXEC sp_executesql @cmd
-                                END
-                        END
-                    ELSE
-                        IF (@currentLogBackup < @PointInTime)
-                            BEGIN
-                                SET @cmd = 'RESTORE LOG ' + @dbName
-                                    + ' FROM DISK = ''' + @backupPath
-                                    + @backupFile + ''' WITH NORECOVERY'
-                                IF (@DebugLevel = 2 OR @DebugLevel = 3)
-                                    PRINT @cmd
-                  --Execute the log restores commands
-                                IF (@DebugLevel IS NULL)
-                                    EXEC sp_executesql @cmd
-                            END
-                        ELSE
-                    IF ((@PointInTime > @previousLogBackup
-                        AND @PointInTime < @currentLogBackup) OR @PointInTime < @previousLogBackup
-                       )
-                        BEGIN
-                            SET @DateTimeValue = CONVERT(VARCHAR,CONVERT(DATETIME,SUBSTRING(@PointInTime,
-                                                                  1,8)),111) + ' '
-                                + SUBSTRING(@PointInTime,8,2) + ':'
-                                + SUBSTRING(@PointInTime,10,2) + ':'
-                                + SUBSTRING(@PointInTime,12,2)
-                            SET @cmd = 'RESTORE LOG ' + @dbName
-                                + ' FROM DISK = ''' + @backupPath + @backupFile
-                                + ''' WITH NORECOVERY, STOPAT = '''
-                                + @DateTimeValue + ''''
-                            IF (@DebugLevel = 2 OR @DebugLevel = 3)
-                                PRINT @cmd
-                  --Execute the log restores commands
-                            IF (@DebugLevel IS NULL)
-                                EXEC sp_executesql @cmd
-                        END
-                    SET @previousLogBackup = @currentLogBackup 
-                    FETCH NEXT FROM backupFiles INTO @backupFile
-                END
-            CLOSE backupFiles
-            DEALLOCATE backupFiles
+    BEGIN
+      DECLARE @Table TABLE (LogicalName varchar(128),[PhysicalName] varchar(128), [Type] varchar, [FileGroupName] varchar(128), [Size] varchar(128), 
+            [MaxSize] varchar(128), [FileId]varchar(128), [CreateLSN]varchar(128), [DropLSN]varchar(128), [UniqueId]varchar(128), [ReadOnlyLSN]varchar(128), [ReadWriteLSN]varchar(128), 
+            [BackupSizeInBytes]varchar(128), [SourceBlockSize]varchar(128), [FileGroupId]varchar(128), [LogGroupGUID]varchar(128), [DifferentialBaseLSN]varchar(128), [DifferentialBaseGUID]varchar(128), [IsReadOnly]varchar(128), [IsPresent]varchar(128), [TDEThumbprint]varchar(128)
+      )
+      DECLARE @Path varchar(1000)='' + @backupPath + @lastFullBackup + ''
+      DECLARE @LogicalNameData varchar(128),@LogicalNameLog varchar(128),@StorageFolder varchar(128)
+      INSERT INTO @table
+      EXEC('RESTORE FILELISTONLY FROM DISK=''' +@Path+ '''')
+      SET @LogicalNameData=(SELECT LogicalName FROM @Table WHERE Type='D')
+      SET @LogicalNameLog=(SELECT LogicalName FROM @Table WHERE Type='L')
+      SET @StorageFolder=(SELECT PhysicalName FROM @Table where Type='D')
+      SET @StorageFolder = SUBSTRING(@StorageFolder, 0, LEN(@StorageFolder) - LEN(REVERSE(SUBSTRING(REVERSE(@StorageFolder),0,CHARINDEX('\',REVERSE(@StorageFolder))))) + 1) + 'Temp\'
 
 
-        --End with recovery so that the database is put back into a working state.
-            SET @cmd = 'RESTORE DATABASE ' + @dbName + ' WITH RECOVERY'
-            IF (@DebugLevel = 2 OR @DebugLevel = 3)
-                PRINT @cmd
-            IF (@DebugLevel IS NULL)
-                EXEC sp_executesql @cmd
+        
+      IF (@newFiles = 1)
+        BEGIN
+          IF (@DebugLevel = 1)
+            PRINT @DebugLevelString + 'USING Data Path from BACKUP: ' + @StorageFolder
+          set @newMDF = @StorageFolder + @dbName + '.mdf'
+          set @newLDF = @StorageFolder + @dbName + '.ldf'
+        END
+      IF (@newFiles = 0 AND @dbExists = 1)
+        BEGIN
+          IF (@DebugLevel = 1)
+            PRINT @DebugLevelString + 'USING Data Path  from DATABASE: ' + @oldMDF
+          set @newMDF = @oldMDF
+          set @newLDF = @oldLDF
+        END
+      ELSE
+        BEGIN
+          -- get Data Path
+          DECLARE @rc int
+          DECLARE @dir nvarchar(4000) 
+          exec @rc = master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE',N'Software\Microsoft\MSSQLServer\MSSQLServer',N'DefaultData', @dir output, 'no_output'
+          set @newMDF = @dir + '\' + @dbName + '.mdf'
+          set @newLDF = @dir + '\' + @dbName + '_log.ldf'
         END
 
-END
+      SET @cmd = 'RESTORE DATABASE ' + @dbName + ' FROM DISK = '''
+        + @backupPath + @lastFullBackup + ''' WITH REPLACE, NORECOVERY,'
+        + 'MOVE ''' + @LogicalNameData  + ''' TO ''' + @newMDF + ''', ' 
+        + 'MOVE ''' + @LogicalNameLog   + ''' TO ''' + @newLDF + '''; '
+
+    END
+
+    --Execute the full restore command
+    IF (@DebugLevel = 2 OR @DebugLevel = 3)
+        PRINT @cmd
+    IF (@DebugLevel IS NULL)
+        EXEC sp_executesql @cmd
+
+
+
+    --Set the path for the log backups
+    SET @backupPath = @UncPath + '\' +  @backupDBName + '\LOG\'
+    IF (@DebugLevel = 1 OR @DebugLevel = 3)
+      PRINT @DebugLevelString + '@backupPath = ' + @backupPath
+
+
+    --Declaring some variables for comparison and string manipuations
+    DECLARE
+      @lfb VARCHAR(255)
+     ,@currentLogBackup VARCHAR(255)
+     ,@previousLogBackup VARCHAR(255)
+     ,@DateTimeValue VARCHAR(255);
+
+    SELECT @lfb = REPLACE(LEFT(RIGHT(@lastFullBackup,19),15),'_','')
+
+
+
+    --Get the list of log files that are relevant to the backups being used
+    SET @cmd = 'DIR /b ' + @backupPath
+    INSERT  INTO @fileList
+            (backupFile)
+            EXEC master.sys.xp_cmdshell @cmd
+    DECLARE backupFiles CURSOR
+    FOR
+        SELECT
+            backupFile
+        FROM
+            @fileList
+        WHERE
+            backupFile LIKE '%_LOG_%'
+            AND backupFile LIKE '%' + @backupDBName + '%'
+            AND REPLACE(LEFT(RIGHT(backupFile,19),15),'_','') > @lfb
+        ORDER BY backupFile
+    OPEN backupFiles
+
+    -- Loop through all the files for the database
+    FETCH NEXT FROM backupFiles INTO @backupFile
+    SET @previousLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
+    SET @lastFullBackup = REPLACE(LEFT(RIGHT(@lastFullBackup,
+                                                     19),15),'_','')
+    IF (@PointInTime < @lastFullBackup)
+      BEGIN
+          PRINT 'Invalid @PointInTime.  Must be a value greater than the last full or diff backup'
+          RETURN -1;
+      END
+    WHILE @@FETCH_STATUS = 0
+      BEGIN
+        SET @currentLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
+        IF (@DebugLevel = 1 OR @DebugLevel = 3)
+            PRINT @DebugLevelString + 'Last Log Backup: ' + @currentLogBackup + ' Last Full Backup: ' + @lfb
+        IF (@PointInTime IS NULL)
+            BEGIN
+                IF (@currentLogBackup > @lfb)
+                    BEGIN
+                        SET @cmd = 'RESTORE LOG ' + @dbName
+                            + ' FROM DISK = ''' + @backupPath
+                            + @backupFile + ''' WITH REPLACE, NORECOVERY'
+                        IF (@DebugLevel = 2 OR @DebugLevel = 3)
+                            PRINT @cmd
+        --Execute the log restores commands
+                        IF (@DebugLevel IS NULL)
+                            EXEC sp_executesql @cmd
+                    END
+            END
+        ELSE
+            IF (@currentLogBackup < @PointInTime)
+                BEGIN
+                    SET @cmd = 'RESTORE LOG ' + @dbName
+                        + ' FROM DISK = ''' + @backupPath
+                        + @backupFile + ''' WITH NORECOVERY'
+                    IF (@DebugLevel = 2 OR @DebugLevel = 3)
+                        PRINT @cmd
+      --Execute the log restores commands
+                    IF (@DebugLevel IS NULL)
+                        EXEC sp_executesql @cmd
+                END
+            ELSE
+        IF ((@PointInTime > @previousLogBackup
+            AND @PointInTime < @currentLogBackup) OR @PointInTime < @previousLogBackup
+           )
+            BEGIN
+                SET @DateTimeValue = CONVERT(VARCHAR,CONVERT(DATETIME,SUBSTRING(@PointInTime,
+                                                      1,8)),111) + ' '
+                    + SUBSTRING(@PointInTime,8,2) + ':'
+                    + SUBSTRING(@PointInTime,10,2) + ':'
+                    + SUBSTRING(@PointInTime,12,2)
+                SET @cmd = 'RESTORE LOG ' + @dbName
+                    + ' FROM DISK = ''' + @backupPath + @backupFile
+                    + ''' WITH NORECOVERY, STOPAT = '''
+                    + @DateTimeValue + ''''
+                IF (@DebugLevel = 2 OR @DebugLevel = 3)
+                    PRINT @cmd
+      --Execute the log restores commands
+                IF (@DebugLevel IS NULL)
+                    EXEC sp_executesql @cmd
+      END
+      SET @previousLogBackup = @currentLogBackup 
+      FETCH NEXT FROM backupFiles INTO @backupFile
+    END
+    CLOSE backupFiles
+    DEALLOCATE backupFiles
+
+
+    --End with recovery so that the database is put back into a working state.
+    SET @cmd = 'RESTORE DATABASE ' + @dbName + ' WITH RECOVERY'
+    IF (@DebugLevel = 2 OR @DebugLevel = 3)
+      PRINT @cmd
+    IF (@DebugLevel IS NULL)
+      EXEC sp_executesql @cmd
+    END
+
