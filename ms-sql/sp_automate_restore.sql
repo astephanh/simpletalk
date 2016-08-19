@@ -210,6 +210,7 @@ AS
                 backupFile LIKE '%_LOG_%'
                 AND backupFile LIKE '%' + @backupDBName + '%'
                 AND REPLACE(LEFT(RIGHT(backupFile,19),15),'_','') > @lfb
+            ORDER BY backupFile
         OPEN backupFiles
 
 
