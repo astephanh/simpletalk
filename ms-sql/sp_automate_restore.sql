@@ -2,10 +2,11 @@
 
 USE [master]
 GO
-/****** Object:  StoredProcedure [dbo].[sp_automate_restore]    Script Date: 7/22/2015 11:46:19 AM ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
+GO
+SET LANGUAGE us_english
 GO
 
 
@@ -21,7 +22,8 @@ GO
 -- then modified by Jason Carter at http://jason-carter.net/professional/restore-script-from-backup-directory-modified.html to work with Ola Hallengrens scripts.
 -- You can find the Ola Hallengren SQL Server Maintenance scripts at https://ola.hallengren.com/
 -- I have based this on Jason Carter's script and extended it so that it can perform a point in time restore, and execute the commands
--- Debug level 1 will print variables which was more of a utility for myself while writing it, Debug level 2 will print just the commands
+-- Debug level 1 will print variables which was more of a utility for myself while writing it, 
+-- Debug level 2 will print just the commands
 -- Debug level 3 will print both the variabls and the commands, and Debug NULL will execute the commands.
 -- 
 --
@@ -64,7 +66,7 @@ GO
 CREATE PROCEDURE [dbo].[sp_automate_restore]
     @DatabaseName VARCHAR(255)
    ,@UncPath VARCHAR(255)
-   ,@DebugLevel INT
+   ,@DebugLevel INT = 3
    ,@PointInTime CHAR(16) = NULL
    ,@NewDatabaseName VARCHAR(255) = NULL
    ,@replaceDatabaseFiles VARCHAR(255) = NULL
@@ -238,13 +240,13 @@ AS
     -- Loop through all the files for the database
     FETCH NEXT FROM backupFiles INTO @backupFile
     SET @previousLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
-    SET @lastFullBackup = REPLACE(LEFT(RIGHT(@lastFullBackup,
-                                                     19),15),'_','')
+    SET @lastFullBackup = REPLACE(LEFT(RIGHT(@lastFullBackup,19),15),'_','')
     IF (@PointInTime < @lastFullBackup)
       BEGIN
           PRINT 'Invalid @PointInTime.  Must be a value greater than the last full or diff backup'
           RETURN -1;
       END
+
     WHILE @@FETCH_STATUS = 0
       BEGIN
         SET @currentLogBackup = REPLACE(LEFT(RIGHT(@backupFile,19),15),'_','')
@@ -281,11 +283,11 @@ AS
             AND @PointInTime < @currentLogBackup) OR @PointInTime < @previousLogBackup
            )
             BEGIN
-                SET @DateTimeValue = CONVERT(VARCHAR,CONVERT(DATETIME,SUBSTRING(@PointInTime,
-                                                      1,8)),111) + ' '
-                    + SUBSTRING(@PointInTime,8,2) + ':'
-                    + SUBSTRING(@PointInTime,10,2) + ':'
-                    + SUBSTRING(@PointInTime,12,2)
+                SET @DateTimeValue = CONVERT(VARCHAR,CONVERT(DATETIME,
+                      SUBSTRING(@PointInTime,1,8)),111) + ' '
+                    + SUBSTRING(@PointInTime,9,2) + ':'
+                    + SUBSTRING(@PointInTime,11,2) + ':'
+                    + SUBSTRING(@PointInTime,13,2)
                 SET @cmd = 'RESTORE LOG ' + @dbName
                     + ' FROM DISK = ''' + @backupPath + @backupFile
                     + ''' WITH NORECOVERY, STOPAT = '''
