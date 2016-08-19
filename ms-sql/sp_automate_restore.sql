@@ -1,5 +1,3 @@
--- vim: ts=2 sw=2 rnu expandtab:
-
 USE [master]
 GO
 SET ANSI_NULLS ON
@@ -46,11 +44,12 @@ GO
 -- 07222015 - Modified by Andy Garrett to allow database to be restored to new database.  To restore, pass in name of the new database using the @NewDatabaseName variable.
 --          - Also modified to take into account any spaces in the name of the database, as the scripts by Ola removes spaces.  This was causing the Path to the backups to fail
 --
--- 08/18/2016 - Stehan Helas
---              - check if Destination Database exists
---							- restore to physical File Name from new Database, new Parameter @replaceDatabaseFiles
---							- remove Servername from BackupDIR (easier restore on different server)
---							- ONLY Full / Log backups
+-- 08/18/2016 - Stephan Helas
+-- - check if Destination Database exists, create it if needed
+-- - new Parameter @replaceDatabaseFiles, to keep the original filenames and path
+-- - remove Servername from BackupDIR (easier restore on different server)
+-- - ONLY Full / Log backups considered for restore (older diff than full breaks the restore)
+-- - fixed wrong stringconversion on PointInTime Recovery
 --
 --
 -- =============================================
@@ -313,3 +312,4 @@ AS
       EXEC sp_executesql @cmd
     END
 
+-- vim: ts=2 sw=2 rnu expandtab:
